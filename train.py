@@ -1,5 +1,5 @@
 import os
-from transformers import AutoModelForCausalLM, AutoTokenizer 
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.trainer_pt_utils import get_parameter_names
 import torch
 import torch.nn as nn
@@ -40,13 +40,14 @@ def evaluate(config, model, val_dataloader):
     return val_loss
 
 
-def train(accelerator, config):
+def train(accelerator, config):    
     set_seed(config['seed'])
 
     accelerator.print(config)
     accelerator.print(f"Using {accelerator.num_processes} GPUs")
 
     tokenizer = AutoTokenizer.from_pretrained(config['tokenizer_name'])
+    added_tokens = None
     # llama has no pad token, set it to new token
     if tokenizer.pad_token is None:
         # these tokens are already in the vocab, just not mapped correctly
@@ -58,16 +59,19 @@ def train(accelerator, config):
         
 
     checkpoint = config["gradient_checkpointing"]
-    model = AutoModelForCausalLM.from_pretrained(config["model_name"], 
+    # model = AutoModelForCausalLM.from_pretrained(config["model_name"])
+    ### org
+    model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path = config["model_name"], 
                                                     use_cache=False if checkpoint else True,
-                                                    trust_remote_code=True) 
+                                                    trust_remote_code=True)
 
-    if added_tokens > 0:
+    if added_tokens and added_tokens > 0:
         model.resize_token_embeddings(len(tokenizer))
     
     if checkpoint:
         model.gradient_checkpointing_enable()
 
+    ### not defined (default)
     if config["lora"]:
         peft_config = LoraConfig(
             # should R be configurable?
@@ -97,7 +101,7 @@ def train(accelerator, config):
     )
 
     # setup for saving training states in case preemption
-    accelerator.register_for_checkpointing(scheduler)
+    # accelerator.register_for_checkpointing(scheduler) ## org
 
     if config["checkpoint"]:
         accelerator.load_state(config["checkpoint"])
@@ -165,8 +169,10 @@ def train(accelerator, config):
         accelerator.print(f"Pushing to HF hub")
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
-        if accelerator.is_main_process:
-            unwrapped_model.push_to_hub(config["save_name"] + "_first_epoch", private=True)
+
+        ### push to git
+        # if accelerator.is_main_process:
+        #     unwrapped_model.push_to_hub(config["save_name"] + "_first_epoch", private=True)
 
             
     accelerator.wait_for_everyone()
@@ -202,6 +208,14 @@ if __name__ == "__main__":
             init_kwargs={"wandb": {"entity": config["wandb_entity"]}},
         )
     else:
-        accelerator = Accelerator()
+        # accelerator = Accelerator()
+        accelerator = Accelerator(cpu=True)
 
     train(accelerator, config=config)
+
+
+### Train command
+# accelerate launch --dynamo_backend=inductor --num_processes=1 --num_machines=1 --machine_rank=0 --deepspeed_multinode_launcher standard --mixed_precision=bf16  --use_deepspeed --deepspeed_config_file=configs/deepspeed/ds_config.json train.py --config configs/train/finetune_sdh.yaml
+
+### Generate command
+# python generate.py --config configs/generate/generate.yaml --prompt "Write a script to reverse a string in Python"
