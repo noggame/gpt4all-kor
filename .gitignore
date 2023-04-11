@@ -165,5 +165,7 @@ cython_debug/
 
 
 # vs code
+*.DS_Store
 .vscode
 *.bin
+main_temp.py
